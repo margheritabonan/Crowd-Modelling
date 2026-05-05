@@ -1056,121 +1056,135 @@ def compute_L(rho_curr, N, h, gamma_i, gamma_d, gamma_h, inflow_flux):
     """
     Opérateur spatial utilisant exclusivement des listes.
     """
+    # Correction : compute_cost ne prend que rho dans ta définition
     u = compute_speed(rho_curr) 
     c = compute_cost(rho_curr, mode="huang")
     
-    # Solveur Eikonal (reçoit des listes)
-    phi = solve_phi_fast_sweeping_first_order(c, gamma_d, gamma_h, N, h)
+    # Solveur Eikonal : On passe [] à la place de gamma_h si on veut 
+    # que les murs soient gérés par le flux et non par un potentiel infini
+    phi = solve_phi_fast_sweeping_first_order(c, gamma_d, [], N, h)
     
-    # Gradient (reçoit la liste gamma_h)
-    grad_x, grad_y = compute_godunov_gradient_former(phi, h, gamma_h)
+    # Gradient (reçoit la liste gamma_h pour ignorer les murs)
+    grad_x, grad_y = compute_godunov_gradient(phi, h, gamma_h)
     
-    # Flux
+    # Flux f = -(||f||/c) * grad(phi)
     f1, f2 = compute_flux_from_eq26(rho_curr, u, c, grad_x, grad_y)
     
-    # Divergence (reçoit les listes)
+    # Divergence (Bilan des masses)
     return compute_drho_dt(rho_curr, f1, f2, h, gamma_i, gamma_d, gamma_h, inflow_flux)
-
-def step_RK3(rho_n, N, h, dt, in_m, de_m, wa_m, inflow_flux):
-    """
-    Third-order TVD Runge-Kutta time stepping.
-    A convex combination of three forward Euler steps.
-    """
-    # Stage 1: Standard Euler step
-    L0 = compute_L(rho_n, N, h, in_m, de_m, wa_m, inflow_flux)
+def step_RK3(rho_n, N, h, dt, gamma_i, gamma_d, gamma_h, inflow_flux):
+    # Étape 1
+    L0 = compute_L(rho_n, N, h, gamma_i, gamma_d, gamma_h, inflow_flux)
     rho1 = rho_n + dt * L0
     
-    # Stage 2: Intermediate step
-    L1 = compute_L(rho1, N, h, in_m, de_m, wa_m, inflow_flux)
+    # Étape 2
+    L1 = compute_L(rho1, N, h, gamma_i, gamma_d, gamma_h, inflow_flux)
     rho2 = 0.75 * rho_n + 0.25 * (rho1 + dt * L1)
     
-    # Stage 3: Final combination
-    L2 = compute_L(rho2, N, h, in_m, de_m, wa_m, inflow_flux)
+    # Étape 3
+    L2 = compute_L(rho2, N, h, gamma_i, gamma_d, gamma_h, inflow_flux)
     rho_new = (1/3) * rho_n + (2/3) * (rho2 + dt * L2)
     
-    # Safety: Ensure density never becomes negative due to precision errors
     return np.maximum(rho_new, 0.0)
 
-#%% Simulation founction
-
-def run_simulation(rho_initial, T_final, N, h, in_m, de_m, wa_m, inflow_flux, n_snapshots=5):
-    """
-    Runs the pedestrian simulation using TVD-RK3 and dynamic time-stepping.
-    """
+def run_simulation(rho_initial, T_final, N, h, gamma_i, gamma_d, gamma_h, inflow_flux, n_snapshots=5):
     rho = rho_initial.copy()
     t = 0.0
     it = 0
-    
-    # Interval for saving density fields
     save_interval = T_final / (n_snapshots - 1) if n_snapshots > 1 else T_final
     next_save_t = 0.0
-    
-    # History list to store (time, density_field)
     history = []
     
     print(f"Starting simulation... Grid: {N}x{N}, T_final: {T_final}")
     
     while t < T_final:
-        # 1. Dynamic CFL condition (u_max is typically 1.0 for free flow)
-        # We ensure dt isn't too large for the RK3 stability
-        dt = 0.5 * h / 1.0 
+        dt = 0.4 * h / 1.0  # CFL légèrement plus prudente (0.4)
         
-        # Adjust dt to not overshoot T_final or the next snapshot
         if t + dt > T_final:
             dt = T_final - t
             
-        # 2. Save snapshot if it's time
         if t >= next_save_t - 1e-9:
             history.append((t, rho.copy()))
             print(f" Snapshot saved at t = {t:.2f}")
             next_save_t += save_interval
 
-        # 3. Time step with TVD-RK3
-        rho = step_RK3(rho, N, h, dt, in_m, de_m, wa_m, inflow_flux)
+        # Mise à jour RK3
+        rho = step_RK3(rho, N, h, dt, gamma_i, gamma_d, gamma_h, inflow_flux)
         
         t += dt
         it += 1
         
-        # Print progress every 5 steps
         if it % 5 == 0:
             mass = np.sum(rho) * (h**2)
             print(f"  Step {it:3d} | Time: {t:.3f} | Mass: {mass:.4f}")
 
-    # Final snapshot
     if len(history) < n_snapshots:
         history.append((t, rho.copy()))
         
-    print("Simulation complete.")
     return history
 
 #%%
 
-# --- Parameters ---
+# 1. Paramètres
 N = 50
-L = 1.0
-h = L / (N - 1)
-T_final = 0.5  # Short duration for testing
-inflow_flux = 0.5 # Incoming pedestrian flow
+T_final = 1
+x, y, X, Y, h = define_mesh(N)
 
-# --- Initial Density (Gaussian blob) ---
-x = np.linspace(0, L, N)
-y = np.linspace(0, L, N)
-X, Y = np.meshgrid(x, y)
-rho_init = 0.5 * np.exp(-((X-0.2)**2 + (Y-0.5)**2) / 0.02)
+# 2. On génère les masques via ta fonction efficace
+in_m, de_m, wa_m = get_boundary_masks(N, start_in=20, count_in=10, start_dest=20, count_dest=10)
 
-# --- Boundaries ---
-# Get masks (using the vectorized function proposed earlier)
-in_m, de_m, wa_m = get_boundary_masks(N, start_in=20, count_in=10, 
-                                          start_dest=20, count_dest=10)
+# 3. CRUCIAL : Conversion en listes de tuples pour l'implémentation "lente"
+list_inflow = [tuple(p) for p in np.argwhere(in_m)]
+list_dest   = [tuple(p) for p in np.argwhere(de_m)]
+list_walls  = [tuple(p) for p in np.argwhere(wa_m)]
 
-# --- Run ---
-# This will return a list of 5 density fields
-simulation_results = run_simulation(rho_init, T_final, N, h, in_m, de_m, wa_m, inflow_flux, n_snapshots=5)
+# 4. Initialisation densité
+rho_init = initialize_density(X, Y, kind="gaussian")
 
+# 5. Run
+simulation_results = run_simulation(
+    rho_init, T_final, N, h, 
+    list_inflow, list_dest, list_walls, 
+    inflow_flux=0.0, n_snapshots=5
+)
 
+#%%
 
+def plot_simulation_results(history, X, Y, n_cols=3):
+    """
+    Visualise les snapshots de densité stockés dans l'historique de la simulation.
+    """
+    n_snapshots = len(history)
+    n_rows = (n_snapshots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    axes = axes.flatten()
+    
+    for i, (t, rho) in enumerate(history):
+        ax = axes[i]
+        # On utilise le transpose .T pour correspondre à l'indexation 'ij' du meshgrid
+        im = ax.imshow(
+            rho.T, 
+            extent=[0, 1, 0, 1], 
+            origin='lower', 
+            cmap='YlOrRd', 
+            vmin=0, vmax=1.0
+        )
+        ax.set_title(f"Temps t = {t:.2f}")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        fig.colorbar(im, ax=ax, label='Densité')
 
+    # Cacher les axes vides si nécessaire
+    for j in range(i + 1, len(axes)):
+        axes[j].axis('off')
+        
+    plt.tight_layout()
+    plt.show()
 
+# --- Appel de la fonction ---
+# Assure-toi que simulation_results est bien la liste retournée par run_simulation
+plot_simulation_results(simulation_results, X, Y)
 
 
 

@@ -44,12 +44,14 @@ The simulation returns density and velocity snapshots, together with diagnostics
 
 ## Stochastic model: Stochastic_model.ipynb
 
-This notebook implements a stochastic particle model for crowd motion. Pedestrians are represented as point agents moving with fixed speed inside a rectangular domain. Their direction changes randomly, and in the second version the direction is chosen from a discrete set of angles using the target direction and nearby agents inside a field of view.
+This notebook implements a stochastic agent-based crowd model. Pedestrians are simulated as individual particles with discrete directions and speed classes. Their motion is influenced by the target exit, nearby agents inside a field of view, walls, obstacles, and optional inflow rules.
 
-Run the cells in order. The domain is set through `boundary`, and boundary checks are done with `Check_boundary_square(...)`. The basic random-motion test is produced with `generate_data_1(n, N)`, where `n` is the number of time steps and `N` is the number of agents.
+Run the notebook cells in order. The first part defines the geometry objects (`Boundary`, `Exit`, `Obstacle`, `TriangleObstacle`, `MultiObstacle`), the angle and speed discretisations, the `Simulation` class, and the `Visualizer` class. A simulation is created by setting the domain, exit, start area, obstacles, field of view, speed classes, number of agents, final time, and number of frames.
 
-The more structured target-based simulation is run with
+A typical run has the form
 
-`agents2_x, agents2_y = generate_data_2(n, N, m, target)`
+`sim.run(); viz = Visualizer(sim); viz.setup(); anim = viz.animate()`
 
-where `m` is the number of discrete angles and `target` is the exit point. The notebook then uses `matplotlib.animation.FuncAnimation` to animate both the random simulation and the target-based simulation.
+The notebook includes several predefined geometries, such as open road, bottlenecks, triangular obstacles, central divider, and multi-obstacle layouts. Inflow can be prescribed with `inflow_schedule`, while `max_exit_rate` limits how many agents can leave per second.
+
+The main outputs are the stored agent positions `sim.xs`, `sim.ys`, the active-agent array `sim.active`, and the generated animations. Extra tools include `plot_pov(...)` for visualising one agent’s field of view, `plot_snapshots(...)` for selected particle snapshots, and `plot_conservation(...)` for counting entered, active, and exited agents.
